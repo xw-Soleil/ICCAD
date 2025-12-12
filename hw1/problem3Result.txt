@@ -1,0 +1,37 @@
+01	/:kernoops, polkitd, systemd-network, systemd-oom, systemd-resolve, systemd-timesync
+02	/bin:bin, proxy, sync
+03	/dev:sys
+04	/home/soleil:soleil
+05	/nonexistent:_apt, cups-browsed, cups-pk-helper, messagebus, nobody, nvidia-persistenced, syslog, tcpdump, whoopsie
+06	/proc:rtkit
+07	/root:root
+08	/run/avahi-daemon:avahi
+09	/run/gnome-initial-setup/:gnome-initial-setup
+10	/run/hplip:hplip
+11	/run/ircd:irc
+12	/run/speech-dispatcher:speech-dispatcher
+13	/run/sshd:sshd
+14	/run/uuidd:uuidd
+15	/run/xrdp:xrdp
+16	/usr/games:games
+17	/usr/lib/dhcpcd:dhcpcd
+18	/usr/sbin:daemon
+19	/var/backups:backup
+20	/var/cache/man:man
+21	/var/lib/colord:colord
+22	/var/lib/fwupd:fwupd-refresh
+23	/var/lib/gdm3:gdm
+24	/var/lib/geoclue:geoclue
+25	/var/lib/gnome-remote-desktop:gnome-remote-desktop
+26	/var/lib/misc:dnsmasq
+27	/var/lib/openvpn/chroot:nm-openvpn
+28	/var/lib/saned:saned
+29	/var/lib/sss:sssd
+30	/var/lib/tpm:tss
+31	/var/lib/usbmux:usbmux
+32	/var/list:list
+33	/var/mail:mail
+34	/var/spool/lpd:lp
+35	/var/spool/news:news
+36	/var/spool/uucp:uucp
+37	/var/www:www-data
