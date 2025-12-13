@@ -45,54 +45,94 @@ do
         # convert the "~" to $HOME
         inputdir="${inputdir/#\~/$HOME}"
         inputdir="${inputdir%/}/"
-        echo "Input dir is $inputdir"
-        echo "The 10 largest files are" ;echo
-        find "$inputdir" -type f -print0 2>/dev/null \
-        | xargs -0 du -h 2>/dev/null \
-        | sort -hr \
-        | head -n 10
+        
+        if [ ! -d "$inputdir" ]; then
+            echo "Error: Directory '$inputdir' does not exist."
+            echo
+        else
+            echo "Input dir is $inputdir"
+            echo "The 10 largest files are" ;echo
+            find "$inputdir" -type f -print0 2>/dev/null \
+            | xargs -0 du -h 2>/dev/null \
+            | sort -hr \
+            | head -n 10
+        fi
     elif [ "$input" == "3" ]; then 
         ((cnt3++))
-        echo "Please input file dir"
-        read inputdir
-        echo "Do you want to Display with both Hex mode and ASCII mode? Which in ELF files." ; echo "Please input [y/n]"
-        while true; do
-            read mode
-            case $mode in 
-                "y") 
-                    head -c 16 "$inputdir"  | hd -Cv
-                    echo
-                    break
-                    ;;
-                "n")
-                    head -c 16 "$inputdir"
-                    echo
-                    break
-                    ;;
-                *)
-                    echo "Please input the right Format y/n" ; echo
-                    ;;
-            esac
-        done
+        echo "Please input file path"
+        read inputfile
+        # convert the "~" to $HOME
+        inputfile="${inputfile/#\~/$HOME}"
+        
+        if [ ! -f "$inputfile" ]; then
+            echo "Error: File '$inputfile' does not exist."
+            echo
+        else
+            echo "Do you want to Display with both Hex mode and ASCII mode? (useful for ELF files)" ; echo "Please input [y/n]"
+            while true; do
+                read displaymode
+                case $displaymode in 
+                    "y") 
+                        head -c 16 "$inputfile"  | hd -Cv
+                        echo
+                        break
+                        ;;
+                    "n")
+                        head -c 16 "$inputfile"
+                        echo
+                        break
+                        ;;
+                    *)
+                        echo "Please input the right Format y/n" ; echo
+                        ;;
+                esac
+            done
+        fi
     elif [ "$input" == "4" ]; then
         ((cnt4++))
         script="./type.sh/typeNew.sh"
 		scriptDir="./type.sh/"
 
-        echo "Typing exercise:"
-        echo "  y  : start (random 10 words)"
-        echo "  r  : re-type last time (-r)"
-        echo "  f  : fixed sentence (-f)"
-        echo "  b  : back to menu"
-        echo
+        if [ ! -f "$script" ]; then
+            echo "Error: Typing script '$script' not found."
+            echo
+        else
+            echo "Typing exercise:"
+            echo "  y  : start (random 10 words)"
+            echo "  r  : re-type last time (-r)"
+            echo "  f  : fixed sentence (-f)"
+            echo "  b  : back to menu"
+            echo
 
-        while true; do
-            read -r -p "Your choice [y/r/f/b]: " mode
-            case "$mode" in
-                y)
+            while true; do
+                read -r -p "Your choice [y/r/f/b]: " mode
+                
+                # Define the argument based on mode
+                case "$mode" in
+                    y)
+                        script_arg=""
+                        ;;
+                    r)
+                        script_arg="-r"
+                        ;;
+                    f)
+                        script_arg="-f"
+                        ;;
+                    b)
+                        break
+                        ;;
+                    *)
+                        echo "Please input y/r/f/b"
+                        continue
+                        ;;
+                esac
+                
+                # Execute the script if not backing to menu
+                if [ "$mode" != "b" ]; then
                     chmod +x "$script" 2>/dev/null
-                    ( cd $scriptDir && bash ./typeNew.sh )
+                    ( cd $scriptDir && bash ./typeNew.sh $script_arg )
 
+                    # Update last duration and character count
                     if [ -f "$scriptDir/time.sav.txt" ]; then
                         LAST_DURATION=$(cat "$scriptDir/time.sav.txt")
                     else
@@ -105,49 +145,9 @@ do
                         LAST_CHARS=""
                     fi
                     break
-                    ;;
-                r)
-                    chmod +x "$script" 2>/dev/null
-                    ( cd $scriptDir && bash ./typeNew.sh -r )
-
-                    if [ -f "$scriptDir/time.sav.txt" ]; then
-                        LAST_DURATION=$(cat "$scriptDir/time.sav.txt")
-                    else
-                        LAST_DURATION=""
-                    fi
-
-                    if [ -f "$scriptDir/typed.sav.txt" ]; then
-                        LAST_CHARS=$(tr -d '\n' < "$scriptDir/typed.sav.txt" | wc -c)
-                    else
-                        LAST_CHARS=""
-                    fi
-                    break
-                    ;;
-                f)
-                    chmod +x "$script" 2>/dev/null
-                    ( cd $scriptDir && bash ./typeNew.sh -f )
-
-                    if [ -f "$scriptDir/time.sav.txt" ]; then
-                        LAST_DURATION=$(cat "$scriptDir/time.sav.txt")
-                    else
-                        LAST_DURATION=""
-                    fi
-
-                    if [ -f "$scriptDir/typed.sav.txt" ]; then
-                        LAST_CHARS=$(tr -d '\n' < "$scriptDir/typed.sav.txt" | wc -c)
-                    else
-                        LAST_CHARS=""
-                    fi
-                    break
-                    ;;
-                b)
-                    break
-                    ;;
-                *)
-                    echo "Please input y/r/f/b"
-                    ;;
-            esac
-        done
+                fi
+            done
+        fi
     elif [ "$input" == "5" ]; then
         ((cnt5++))
         if [ -z "$LAST_DURATION" ] || [ -z "$LAST_CHARS" ] || [ "$LAST_CHARS" -eq 0 ]; then
