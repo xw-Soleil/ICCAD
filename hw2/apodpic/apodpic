@@ -1,0 +1,81 @@
+#!/bin/bash
+
+
+is_legal_mmdd(){
+	local mmdd="$1"
+	[[ "$mmdd" =~ ^[0-9]{4}$ ]] || return 1
+
+	local yyyy mm dd norm
+	yyyy="$(date +%Y)"
+	mm="${mmdd:0:2}"
+	dd="${mmdd:2:2}"
+
+	norm="$(date -d "${yyyy}-${mm}-${dd}" +%m%d 2>/dev/null)" || return 1
+	[[ "$norm" == "$mmdd" ]]
+}
+
+apod_page_url(){
+	local mmdd="$1"
+	local yy
+	yy="$(date +%y)"
+	echo "https://apod.nasa.gov/apod/ap${yy}${mmdd}.html"
+}
+
+extract_image_url(){
+	local page_url="$1"
+	local html img
+
+	html="$(curl -sL "$page_url")"
+
+	# Find href="image/...(jpg|png|gif)"
+	img="$(echo "$html" | grep -Eoi 'src="image/[^"]+\.(jpg|jpeg|png|gif)"'| head -n1 | cut -d '"' -f2 )"
+	if [[ -z "$img" ]]; then
+    	img="$(echo "$html" | grep -Eoi 'href="image/[^"]+\.(jpg|jpeg|png|gif)"' | head -n1 | cut -d'"' -f2)"
+  	fi
+
+  	[[ -n "$img" ]] || return 1
+  	echo "https://apod.nasa.gov/apod/$img"
+}
+
+image_size_kb(){
+	local url="$1"
+	local bytes
+	bytes="$(curl -sI ${url} | awk -F': ' 'tolower($1)=="content-length"{print $2}' | tr -d ''\r)"
+
+	[[ -n "$bytes" ]] || return 1
+
+	awk -v b="$bytes" 'BEGIN{printf "%.1f kB", b/1000}'
+}
+
+
+
+today="$(date +%m%d)"
+for mmdd in "$@" ; do
+	if  ! is_legal_mmdd "$mmdd"  ; then
+		echo "$mmdd not a legal MMDD"
+		continue
+	fi
+
+	if (( 10#$mmdd > 10#$today )) ; then 
+		echo "$mmdd is a day not reached yet"
+		continue
+	fi
+	page="$(apod_page_url "$mmdd")"
+
+	code="$(curl -s -o /dev/null -w "%{http_code}" -L "$page")"
+	if [[ "$code" != "200" ]]; then
+  		echo "$mmdd a day not reached yet"
+  		continue
+	fi
+	imgurl="$(extract_image_url "$page")" || {
+  		echo "$mmdd no picture found"
+  		continue
+	}
+
+	fname="$(basename "$imgurl")"
+	image_size="$(image_size_kb "${imgurl}")"
+	echo "$mmdd $fname, $image_size"
+
+done
+
+
