@@ -1,0 +1,22 @@
+# Make an obj library from two assembly source files,
+# and build a main progrom by linking to this library.
+# The result is shown by shell command line 'echo $?'
+
+SRC = as_abc.s as_def.s
+OBJ = $(SRC:%.s=%.o)
+LIB = libmytry.a
+MAIN = as_main
+
+all: $(MAIN)
+
+$(LIB): $(OBJ)
+	ar  r  $@  $?
+
+%.o: %.s
+	as  $<  -o  $@
+
+$(MAIN): as_main.o $(LIB)
+	ld $(MAIN).o -L. -lmytry -o $@
+
+clean:
+	rm -f $(MAIN).o $(OBJ) $(LIB) $(MAIN)
