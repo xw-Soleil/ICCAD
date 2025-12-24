@@ -40,7 +40,7 @@ extract_image_url(){
 image_size_kb(){
 	local url="$1"
 	local bytes
-	bytes="$(curl -sI ${url} | awk -F': ' 'tolower($1)=="content-length"{print $2}' | tr -d ''\r)"
+	bytes="$(curl -sI "$url" | awk -F': ' 'tolower($1)=="content-length"{print $2}' | tr -d '\r')"
 
 	[[ -n "$bytes" ]] || return 1
 

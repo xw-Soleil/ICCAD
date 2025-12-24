@@ -54,7 +54,7 @@ main() {
   for back in $(seq 0 "$max_back"); do
     yy="$(date -d "today - $back day" +%y)"
     mmdd="$(date -d "today - $back day" +%m%d)"
-    page="$BASE/ap191130.html"
+    page="$BASE/ap${yy}1217.html"
 
     imgurl="$(extract_image_url_from_page "$page" || true)"
     if [[ -z "$imgurl" ]]; then

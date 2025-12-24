@@ -67,6 +67,9 @@ do
         if [ ! -f "$inputfile" ]; then
             echo "Error: File '$inputfile' does not exist."
             echo
+        elif [ ! -x "$inputfile" ]; then
+            echo "Error: File '$inputfile' is not executable."
+            echo
         else
             echo "Do you want to Display with both Hex mode and ASCII mode? (useful for ELF files)" ; echo "Please input [y/n]"
             while true; do
