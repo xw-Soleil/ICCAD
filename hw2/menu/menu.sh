@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# Display menu options
 show_menu() {
  echo "1. Print a Hello World!"
  echo "2. List top 10 largest files recursively in a user-input directory"
@@ -10,6 +11,7 @@ show_menu() {
  echo "Your choice:"
 }
 
+# Initialize counters
 count=0
 cnt1=0
 cnt2=0
@@ -19,6 +21,7 @@ cnt5=0
 LAST_DURATION=""
 LAST_CHARS=""
 
+# Main loop
 while true
 do 
     show_menu
@@ -26,6 +29,7 @@ do
     echo "You choose: $input"; echo
 
     if [ "$input" == "q" ]; then
+        # Report usage statistics and quit
         echo "Here I report the menu usages below:"; echo
         echo "Choice 1 was chosen $cnt1 times."
         echo "Choice 2 was chosen $cnt2 times."
@@ -36,13 +40,15 @@ do
         echo "Total menu accesses: $count times."
         break
     elif [ "$input" == "1" ]; then
+        # Print "Hello World!"
         ((cnt1++))
         echo "Hello World!" ; echo
     elif [ "$input" == "2" ]; then
+        # Find top 10 largest files
         ((cnt2++))
         echo "Please input a file dir"
         read inputdir
-        # convert the "~" to $HOME
+        # Convert "~" to $HOME
         inputdir="${inputdir/#\~/$HOME}"
         inputdir="${inputdir%/}/"
         
@@ -52,16 +58,18 @@ do
         else
             echo "Input dir is $inputdir"
             echo "The 10 largest files are" ;echo
+            # Find files, calculate sizes, sort and display top 10
             find "$inputdir" -type f -print0 2>/dev/null \
             | xargs -0 du -h 2>/dev/null \
             | sort -hr \
             | head -n 10
         fi
     elif [ "$input" == "3" ]; then 
+        # Show first 16 bytes of executable file
         ((cnt3++))
         echo "Please input file path"
         read inputfile
-        # convert the "~" to $HOME
+        # Convert "~" to $HOME
         inputfile="${inputfile/#\~/$HOME}"
         
         if [ ! -f "$inputfile" ]; then
@@ -76,11 +84,13 @@ do
                 read displaymode
                 case $displaymode in 
                     "y") 
+                        # Display in hex and ASCII format
                         head -c 16 "$inputfile"  | hd -Cv
                         echo
                         break
                         ;;
                     "n")
+                        # Display raw bytes
                         head -c 16 "$inputfile"
                         echo
                         break
@@ -92,6 +102,7 @@ do
             done
         fi
     elif [ "$input" == "4" ]; then
+        # Run typing exercise
         ((cnt4++))
         script="./type.sh/typeNew.sh"
 		scriptDir="./type.sh/"
@@ -110,7 +121,7 @@ do
             while true; do
                 read -r -p "Your choice [y/r/f/b]: " mode
                 
-                # Define the argument based on mode
+                # Map mode to script argument
                 case "$mode" in
                     y)
                         script_arg=""
@@ -130,12 +141,12 @@ do
                         ;;
                 esac
                 
-                # Execute the script if not backing to menu
+                # Execute typing script
                 if [ "$mode" != "b" ]; then
                     chmod +x "$script" 2>/dev/null
                     ( cd $scriptDir && bash ./typeNew.sh $script_arg )
 
-                    # Update last duration and character count
+                    # Save typing data for speed calculation
                     if [ -f "$scriptDir/time.sav.txt" ]; then
                         LAST_DURATION=$(cat "$scriptDir/time.sav.txt")
                     else
@@ -152,15 +163,18 @@ do
             done
         fi
     elif [ "$input" == "5" ]; then
+        # Display typing speed in red
         ((cnt5++))
         if [ -z "$LAST_DURATION" ] || [ -z "$LAST_CHARS" ] || [ "$LAST_CHARS" -eq 0 ]; then
             echo "No typing record yet. Please run option 4 first."
             echo
         else
             echo "Your last typing speed record is:"
+            # Calculate speed metrics
             spc=$(echo "scale=6; $LAST_DURATION / $LAST_CHARS" | bc)
             cps=$(echo "scale=3; $LAST_CHARS / $LAST_DURATION" | bc)
 
+            # Print in red color using ANSI escape codes
             printf "\e[31mTyping speed: %s sec/char, %s chars/sec (chars=%d, time=%.3fs)\e[0m\n\n" \
                    "$spc" "$cps" "$LAST_CHARS" "$LAST_DURATION"
         fi
