@@ -18,39 +18,39 @@ void readline()
 		printf("can't open file");
 		exit(-1);
 	}
-	while (!feof(file))
+	while (1)
 	{
-		node=(struct listnode *)malloc(sizeof(float)*10+sizeof(int)+sizeof(int *));
-		/* each time, read two sets of x, y, z. */	
-		fscanf(file,"%f",&fTemp);
+		node=(struct listnode *)malloc(sizeof(struct listnode));
+		if (node == NULL) {
+			perror("malloc failed");
+			fclose(file);
+			exit(-1);
+		}
+
+		/* each time, read two sets of x, y, z. */ 	
+		if (fscanf(file,"%f",&fTemp) != 1) { free(node); break; }
 		node->line1.p1.x=fTemp;
-		
-		fscanf(file,"%f",&fTemp);
+        
+		if (fscanf(file,"%f",&fTemp) != 1) { free(node); break; }
 		node->line1.p1.y=fTemp;
 
-		fscanf(file,"%f",&fTemp);
+		if (fscanf(file,"%f",&fTemp) != 1) { free(node); break; }
 		node->line1.p1.z=fTemp;
 
-		fscanf(file,"%f",&fTemp);
+		if (fscanf(file,"%f",&fTemp) != 1) { free(node); break; }
 		node->line1.p2.x=fTemp;
 
-		fscanf(file,"%f",&fTemp);
+		if (fscanf(file,"%f",&fTemp) != 1) { free(node); break; }
 		node->line1.p2.y=fTemp;
 
 		state=fscanf(file,"%f",&fTemp);
+		if (state != 1) { free(node); break; }
 		node->line1.p2.z=fTemp;
-	
-/*		should consider problem here, but until
-		find the reason after debugging. */
 
-		if(state!=-1) {
-			node->next=listhead;
-			listhead=node;
-			number++;
-		} else {
-/*		not good enough to use 'state' here, no returned value either. */
-			free(node);
-		}
+		node->off = 0;           /* ensure visible */
+		node->next=listhead;
+		listhead=node;
+		number++;
 	}
 
 }

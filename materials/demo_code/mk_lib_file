@@ -15,7 +15,7 @@ $(LIB): $(OBJ)
 %.o: %.s
 	as  $<  -o  $@
 
-$(MAIN): as_main.o $(LIB)
+$(MAIN): as_main.o $(LIB)	
 	ld $(MAIN).o -L. -lmytry -o $@
 
 clean:
