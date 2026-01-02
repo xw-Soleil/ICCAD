@@ -31,15 +31,31 @@ else
   BOLD='' RESET='' GREEN='' YELLOW='' RED='' BLUE=''
 fi
 
-# ---------- gum 检测 ----------
+# ---------- TUI 工具检测 ----------
+USE_DIALOG=0
 USE_GUM=0
-if command -v gum >/dev/null 2>&1; then
-  USE_GUM=1
+
+# 优先使用 dialog（更稳定，Ubuntu 默认包含）
+if command -v dialog >/dev/null 2>&1; then
+  USE_DIALOG=1
+# 备选 gum（需要单独安装）
+elif command -v gum >/dev/null 2>&1; then
+  # 检测是否是 snap 安装的 gum（可能不稳定）
+  if command -v snap >/dev/null 2>&1 && snap list gum >/dev/null 2>&1; then
+    # snap 版本的 gum 在某些终端下有兼容性问题，默认禁用
+    # 如果想强制启用，设置环境变量 DRILL_USE_GUM=1
+    if [[ "${DRILL_USE_GUM:-0}" -eq 1 ]]; then
+      USE_GUM=1
+    fi
+  else
+    # 非 snap 版本，正常启用
+    USE_GUM=1
+  fi
 fi
 
 # ---------- Readline 配置（Tab 补全等）----------
-# 只在非 gum 模式下配置（gum 有自己的输入处理）
-if [[ $USE_GUM -eq 0 ]]; then
+# 只在非 TUI 模式下配置（dialog/gum 有自己的输入处理）
+if [[ $USE_DIALOG -eq 0 && $USE_GUM -eq 0 ]]; then
   # 启用文件名补全
   bind 'set show-all-if-ambiguous on' 2>/dev/null || true
   bind 'set completion-ignore-case on' 2>/dev/null || true
@@ -83,6 +99,10 @@ while [[ $# -gt 0 ]]; do
   ./review-new.sh --keep       # 保留沙盒目录
 
 提示：安装 gum (https://github.com/charmbracelet/gum) 获得更好的交互体验
+
+注意：snap 安装的 gum 在某些终端下可能不稳定，脚本会自动禁用。
+      如需强制启用：DRILL_USE_GUM=1 ./review-new.sh
+      推荐使用 brew (macOS) 或从源码编译安装 gum
 EOF
       exit 0
       ;;
@@ -116,7 +136,9 @@ say() { printf "%b\n" "$*"; }
 hr() { say "${BOLD}────────────────────────────────────────────────────────────${RESET}"; }
 
 pause_any() {
-  if [[ $USE_GUM -eq 1 ]]; then
+  if [[ $USE_DIALOG -eq 1 ]]; then
+    dialog --msgbox "按 Enter 继续..." 5 40 2>&1 >/dev/tty
+  elif [[ $USE_GUM -eq 1 ]]; then
     gum confirm "继续？" --affirmative "是" --negative "否" || true
   else
     read -r -p "按 Enter 继续... " _ </dev/tty
@@ -395,7 +417,9 @@ exercise_loop() {
   say "${BOLD}🎯 目标:${RESET} $goal"
   say "${BOLD}📁 目录:${RESET} $WORKDIR/$subdir"
 
-  if [[ $USE_GUM -eq 1 ]]; then
+  if [[ $USE_DIALOG -eq 1 ]]; then
+    say "${YELLOW}提示: 输入命令，或选择 h=提示 s=答案 sh=shell q=退出${RESET}"
+  elif [[ $USE_GUM -eq 1 ]]; then
     say "${YELLOW}提示: 输入命令，或选择 h=提示 s=答案 sh=shell q=退出${RESET}"
   else
     say "${YELLOW}提示: h=提示 s=答案 sh=进入shell(有完整Tab补全) q=退出${RESET}"
@@ -404,8 +428,20 @@ exercise_loop() {
 
   while true; do
     local cmd
-    if [[ $USE_GUM -eq 1 ]]; then
-      cmd=$(gum input --placeholder "输入命令..." --prompt "drill> " || echo "q")
+    if [[ $USE_DIALOG -eq 1 ]]; then
+      # 使用 dialog 输入框
+      cmd=$(dialog --stdout --inputbox "输入命令 (h=提示 s=答案 sh=shell q=退出):" 10 60 2>&1)
+      # dialog 返回空或 ESC 时退出
+      if [[ -z "$cmd" ]]; then
+        continue
+      fi
+    elif [[ $USE_GUM -eq 1 ]]; then
+      # gum input：界面输出到 tty，只捕获用户输入
+      cmd=$(gum input --placeholder "输入命令..." --prompt "drill> " 2>/dev/tty | head -n 1 | tr -d '\r\n' || echo "")
+      # 如果 gum 失败或返回空，使用降级方案
+      if [[ -z "$cmd" ]]; then
+        read -r -e -p "drill> " cmd </dev/tty || exit 0
+      fi
     else
       read -r -e -p "drill> " cmd </dev/tty || exit 0
     fi
@@ -415,7 +451,9 @@ exercise_loop() {
         exit 0
         ;;
       hint|h)
-        if [[ $USE_GUM -eq 1 ]]; then
+        if [[ $USE_DIALOG -eq 1 ]]; then
+          dialog --msgbox "💡 提示:\n\n$hint" 12 70 2>&1 >/dev/tty
+        elif [[ $USE_GUM -eq 1 ]]; then
           gum style --border rounded --padding "1 2" --border-foreground 214 "💡 提示: $hint"
         else
           say "${YELLOW}💡 提示: $hint${RESET}"
@@ -423,7 +461,9 @@ exercise_loop() {
         continue
         ;;
       solution|s)
-        if [[ $USE_GUM -eq 1 ]]; then
+        if [[ $USE_DIALOG -eq 1 ]]; then
+          dialog --msgbox "✅ 参考答案:\n\n$solution" 12 70 2>&1 >/dev/tty
+        elif [[ $USE_GUM -eq 1 ]]; then
           gum style --border rounded --padding "1 2" --border-foreground 82 "✅ 参考答案: $solution"
         else
           say "${GREEN}✅ 参考答案: $solution${RESET}"
@@ -457,7 +497,9 @@ exercise_loop() {
     fi
 
     if run_checker "$checker_type" "$checker_args"; then
-      if [[ $USE_GUM -eq 1 ]]; then
+      if [[ $USE_DIALOG -eq 1 ]]; then
+        dialog --msgbox "🎉 通过！" 6 30 2>&1 >/dev/tty
+      elif [[ $USE_GUM -eq 1 ]]; then
         gum style --border double --padding "1 3" --border-foreground 82 "🎉 通过！"
       else
         say "${GREEN}${BOLD}🎉 通过！${RESET}"
@@ -543,9 +585,9 @@ run_all() {
     rc=$?
     set -e
     case "$rc" in
-      0) ((passed++)) ;;
-      2) ((skipped++)) ;;
-      *) ((failed++)) ;;
+      0) passed=$((passed + 1)) ;;
+      2) skipped=$((skipped + 1)) ;;
+      *) failed=$((failed + 1)) ;;
     esac
   done
 
@@ -565,9 +607,9 @@ run_quick() {
     rc=$?
     set -e
     case "$rc" in
-      0) ((passed++)) ;;
-      2) ((skipped++)) ;;
-      *) ((failed++)) ;;
+      0) passed=$((passed + 1)) ;;
+      2) skipped=$((skipped + 1)) ;;
+      *) failed=$((failed + 1)) ;;
     esac
   done
 
@@ -588,9 +630,9 @@ run_by_tag() {
     rc=$?
     set -e
     case "$rc" in
-      0) ((passed++)) ;;
-      2) ((skipped++)) ;;
-      *) ((failed++)) ;;
+      0) passed=$((passed + 1)) ;;
+      2) skipped=$((skipped + 1)) ;;
+      *) failed=$((failed + 1)) ;;
     esac
   done
 
@@ -614,7 +656,19 @@ main_menu() {
   say "${BOLD}练习目录:${RESET} $WORKDIR"
   say ""
 
-  if [[ $USE_GUM -eq 1 ]]; then
+  if [[ $USE_DIALOG -eq 1 ]]; then
+    choice=$(dialog --stdout --menu "选择练习模式:" 15 60 3 \
+      1 "全量练习（所有题目）" \
+      2 "快速练习（基础题）" \
+      3 "只创建沙盒" \
+      2>&1)
+    case "$choice" in
+      1) run_all ;;
+      2|"") run_quick ;;
+      3) say "已创建沙盒：$WORKDIR"; KEEP=1 ;;
+      *) run_quick ;;
+    esac
+  elif [[ $USE_GUM -eq 1 ]]; then
     choice=$(gum choose "全量练习（所有题目）" "快速练习（基础题）" "只创建沙盒" || echo "快速练习（基础题）")
     case "$choice" in
       "全量练习（所有题目）") run_all ;;
