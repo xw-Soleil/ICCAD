@@ -4,7 +4,8 @@
 # CLI Drill v2: 数据驱动版本
 # =========================
 
-# 必须在交互模式下运行以启用 readline
+# 让 read -e 使用 readline（但避免脚本结束后停在交互 shell）
+# 这里用 -i 主要是为了某些环境下的 readline 行为一致。
 if [[ $- != *i* ]]; then
   exec bash -i "$0" "$@"
 fi
@@ -14,10 +15,19 @@ set -euo pipefail
 # ---------- 配置 ----------
 KEEP=0
 MODE="menu"
+TAG_FILTER=""  # --tag
 WORKROOT="${XDG_STATE_HOME:-$HOME/.local/state}/cli-drill"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXERCISES_CONF="$SCRIPT_DIR/exercises.conf"
-CURRENT_SUBDIR="."  # 当前练习的工作子目录（用于 Tab 补全）
+CURRENT_SUBDIR="."  # 当前练习的工作子目录（用于显示/上下文）
+
+# history（↑↓跨题/跨天）
+mkdir -p "$WORKROOT"
+export HISTFILE="$WORKROOT/.drill_history"
+export HISTSIZE=2000
+export HISTFILESIZE=5000
+shopt -s histappend 2>/dev/null || true
+set -o history 2>/dev/null || true
 
 # ---------- 颜色和样式（降级友好）----------
 if [[ -t 1 ]] && command -v tput >/dev/null 2>&1 && tput colors >/dev/null 2>&1; then
@@ -35,33 +45,43 @@ fi
 USE_DIALOG=0
 USE_GUM=0
 
-# 优先使用 dialog（更稳定，Ubuntu 默认包含）
-if command -v dialog >/dev/null 2>&1; then
-  USE_DIALOG=1
-# 备选 gum（需要单独安装）
-elif command -v gum >/dev/null 2>&1; then
-  # 检测是否是 snap 安装的 gum（可能不稳定）
-  if command -v snap >/dev/null 2>&1 && snap list gum >/dev/null 2>&1; then
-    # snap 版本的 gum 在某些终端下有兼容性问题，默认禁用
-    # 如果想强制启用，设置环境变量 DRILL_USE_GUM=1
-    if [[ "${DRILL_USE_GUM:-0}" -eq 1 ]]; then
+# 可选：强制 UI（auto/dialog/gum/none）
+DRILL_UI="${DRILL_UI:-auto}"
+
+has_cmd() { command -v "$1" >/dev/null 2>&1; }
+
+if [[ "$DRILL_UI" == "none" ]]; then
+  USE_DIALOG=0
+  USE_GUM=0
+elif [[ "$DRILL_UI" == "dialog" ]]; then
+  if has_cmd dialog; then USE_DIALOG=1; fi
+elif [[ "$DRILL_UI" == "gum" ]]; then
+  if has_cmd gum; then USE_GUM=1; fi
+else
+  # auto：优先 dialog（稳定），其次 gum
+  if has_cmd dialog; then
+    USE_DIALOG=1
+  elif has_cmd gum; then
+    # snap 版 gum 在某些终端下不稳定：默认禁用，除非 DRILL_USE_GUM=1
+    if has_cmd snap && snap list gum >/dev/null 2>&1; then
+      if [[ "${DRILL_USE_GUM:-0}" -eq 1 ]]; then
+        USE_GUM=1
+      fi
+    else
       USE_GUM=1
     fi
-  else
-    # 非 snap 版本，正常启用
-    USE_GUM=1
   fi
 fi
 
 # ---------- Readline 配置（Tab 补全等）----------
-# 只在非 TUI 模式下配置（dialog/gum 有自己的输入处理）
-if [[ $USE_DIALOG -eq 0 && $USE_GUM -eq 0 ]]; then
-  # 启用文件名补全
+# 重要：gum 的 gum input 不支持 Tab 补全，所以 gum 模式下我们也用 read -e 输入
+# dialog 仍然用 dialog 的 inputbox（无法 Tab 补全）
+if [[ $USE_DIALOG -eq 0 ]]; then
   bind 'set show-all-if-ambiguous on' 2>/dev/null || true
   bind 'set completion-ignore-case on' 2>/dev/null || true
-  bind 'TAB:complete' 2>/dev/null || true
+  bind 'TAB:menu-complete' 2>/dev/null || true
 
-  # 加载系统补全（如果可用）
+  # 加载系统补全（可能对交互 shell 有帮助；read -e 默认主要补文件名）
   if [[ -r /usr/share/bash-completion/bash_completion ]]; then
     # shellcheck disable=SC1091
     source /usr/share/bash-completion/bash_completion 2>/dev/null || true
@@ -69,17 +89,6 @@ if [[ $USE_DIALOG -eq 0 && $USE_GUM -eq 0 ]]; then
     # shellcheck disable=SC1091
     source /etc/bash_completion 2>/dev/null || true
   fi
-
-  # 自定义补全：在用户当前工作子目录下补全
-  _drill_complete() {
-    local cur="${COMP_WORDS[COMP_CWORD]}"
-    local workdir="$WORKDIR/${CURRENT_SUBDIR:-.}"
-
-    # 如果在工作目录，提供文件补全
-    if [[ -d "$workdir" ]]; then
-      COMPREPLY=( $(cd "$workdir" 2>/dev/null && compgen -f -- "$cur") )
-    fi
-  }
 fi
 
 # ---------- 参数解析 ----------
@@ -88,21 +97,22 @@ while [[ $# -gt 0 ]]; do
     --keep) KEEP=1; shift ;;
     --all) MODE="all"; shift ;;
     --quick) MODE="quick"; shift ;;
-    --tag) TAG_FILTER="$2"; shift 2 ;;
+    --tag) TAG_FILTER="${2:-}"; shift 2 ;;
     -h|--help)
       cat <<'EOF'
 用法：
-  ./review-new.sh              # 菜单模式
-  ./review-new.sh --all        # 运行所有练习
-  ./review-new.sh --quick      # 快速模式（基础题）
-  ./review-new.sh --tag basic  # 只运行特定标签的题
-  ./review-new.sh --keep       # 保留沙盒目录
+  ./review-new.sh                  # 菜单模式
+  ./review-new.sh --all            # 运行所有练习
+  ./review-new.sh --quick          # 快速模式（基础题）
+  ./review-new.sh --tag basic      # 只运行特定标签的题
+  ./review-new.sh --keep           # 保留沙盒目录
 
-提示：安装 gum (https://github.com/charmbracelet/gum) 获得更好的交互体验
+UI 选择（可选）：
+  DRILL_UI=auto|dialog|gum|none ./review-new.sh
 
-注意：snap 安装的 gum 在某些终端下可能不稳定，脚本会自动禁用。
-      如需强制启用：DRILL_USE_GUM=1 ./review-new.sh
-      推荐使用 brew (macOS) 或从源码编译安装 gum
+提示：
+- gum input 本身不支持 bash/readline Tab 补全；
+  本脚本在 gum 模式下会改用 read -e 输入，从而获得 Tab 补全（路径补全）。
 EOF
       exit 0
       ;;
@@ -111,7 +121,6 @@ EOF
 done
 
 # ---------- 工作目录设置 ----------
-mkdir -p "$WORKROOT"
 SESSION_DATE="$(date +%F)"
 WORKDIR="$WORKROOT/$SESSION_DATE"
 if [[ -e "$WORKDIR" ]]; then
@@ -292,9 +301,7 @@ exact_content() {
   printf "%s" "$expected" | diff -q "$file" - >/dev/null 2>&1
 }
 
-not_exists() {
-  ! path_exists "$1"
-}
+not_exists() { ! path_exists "$1"; }
 
 no_tabs() {
   local file="$WORKDIR/$1"
@@ -333,7 +340,9 @@ find_result() {
   tmp_exp="$(mktemp)"
   tmp_got="$(mktemp)"
 
-  ( cd "$WORKDIR" && find . -type f -name '*.txt' ) | normalize_paths | sort -u >"$tmp_exp"
+  # 更稳定：不扫 results，避免把输出文件自己找出来；也避免后续练习文件污染预期
+  ( cd "$WORKDIR" && find data docs links -type f -name '*.txt' ) \
+    | normalize_paths | sort -u >"$tmp_exp"
   normalize_paths <"$result_file" | sort -u >"$tmp_got"
 
   diff -q "$tmp_exp" "$tmp_got" >/dev/null 2>&1
@@ -350,7 +359,7 @@ run_checker() {
   case "$checker_type" in
     file_exists)
       IFS=':' read -r f1 f2 <<< "$checker_args"
-      file_exists "$f1" && { [[ -z "$f2" ]] || file_exists "$f2"; }
+      file_exists "$f1" && { [[ -z "${f2:-}" ]] || file_exists "$f2"; }
       ;;
     not_exists)
       not_exists "$checker_args"
@@ -409,7 +418,6 @@ exercise_loop() {
   local id="$1" title="$2" goal="$3" hint="$4" solution="$5"
   local checker_type="$6" checker_args="$7" subdir="${8:-.}"
 
-  # 设置当前子目录（用于 Tab 补全上下文）
   CURRENT_SUBDIR="$subdir"
 
   hr
@@ -420,39 +428,35 @@ exercise_loop() {
   if [[ $USE_DIALOG -eq 1 ]]; then
     say "${YELLOW}提示: 输入命令，或选择 h=提示 s=答案 sh=shell q=退出${RESET}"
   elif [[ $USE_GUM -eq 1 ]]; then
-    say "${YELLOW}提示: 输入命令，或选择 h=提示 s=答案 sh=shell q=退出${RESET}"
+    say "${YELLOW}提示: h=提示 s=答案 sh=shell(完整补全) q=退出${RESET}"
+    say "${BLUE}💡 本模式输入用 read -e，所以 Tab 可补全“当前题目目录”下的路径${RESET}"
   else
-    say "${YELLOW}提示: h=提示 s=答案 sh=进入shell(有完整Tab补全) q=退出${RESET}"
+    say "${YELLOW}提示: h=提示 s=答案 sh=shell q=退出${RESET}"
     say "${BLUE}💡 可用 Tab 补全文件名，↑↓ 浏览历史${RESET}"
   fi
 
   while true; do
-    local cmd
+    local cmd=""
+
     if [[ $USE_DIALOG -eq 1 ]]; then
-      # 使用 dialog 输入框
-      cmd=$(dialog --stdout --inputbox "输入命令 (h=提示 s=答案 sh=shell q=退出):" 10 60 2>&1)
-      # dialog 返回空或 ESC 时退出
-      if [[ -z "$cmd" ]]; then
-        continue
-      fi
-    elif [[ $USE_GUM -eq 1 ]]; then
-      # gum input：界面输出到 tty，只捕获用户输入
-      cmd=$(gum input --placeholder "输入命令..." --prompt "drill> " 2>/dev/tty | head -n 1 | tr -d '\r\n' || echo "")
-      # 如果 gum 失败或返回空，使用降级方案
-      if [[ -z "$cmd" ]]; then
-        read -r -e -p "drill> " cmd </dev/tty || exit 0
-      fi
+      cmd=$(dialog --stdout --inputbox "输入命令 (h=提示 s=答案 sh=shell q=退出):" 10 70 2>&1)
+      [[ -z "$cmd" ]] && continue
     else
-      read -r -e -p "drill> " cmd </dev/tty || exit 0
+      # 关键点：在读取输入前进入题目目录 -> Tab 补全的上下文就是该目录
+      pushd "$WORKDIR/$subdir" >/dev/null 2>&1 || true
+      # 让 history 文件生效（避免某些环境下第一次不加载）
+      history -r "$HISTFILE" 2>/dev/null || true
+      read -r -e -p "drill> " cmd </dev/tty || { popd >/dev/null 2>&1 || true; exit 0; }
+      popd >/dev/null 2>&1 || true
     fi
 
     case "$cmd" in
-      quit|exit|q)
-        exit 0
-        ;;
+      "" ) continue ;;
+      quit|exit|q) exit 0 ;;
+
       hint|h)
         if [[ $USE_DIALOG -eq 1 ]]; then
-          dialog --msgbox "💡 提示:\n\n$hint" 12 70 2>&1 >/dev/tty
+          dialog --msgbox "💡 提示:\n\n$hint" 12 80 2>&1 >/dev/tty
         elif [[ $USE_GUM -eq 1 ]]; then
           gum style --border rounded --padding "1 2" --border-foreground 214 "💡 提示: $hint"
         else
@@ -460,9 +464,10 @@ exercise_loop() {
         fi
         continue
         ;;
+
       solution|s)
         if [[ $USE_DIALOG -eq 1 ]]; then
-          dialog --msgbox "✅ 参考答案:\n\n$solution" 12 70 2>&1 >/dev/tty
+          dialog --msgbox "✅ 参考答案:\n\n$solution" 12 80 2>&1 >/dev/tty
         elif [[ $USE_GUM -eq 1 ]]; then
           gum style --border rounded --padding "1 2" --border-foreground 82 "✅ 参考答案: $solution"
         else
@@ -470,22 +475,23 @@ exercise_loop() {
         fi
         continue
         ;;
+
       shell|sh)
         say "${BLUE}进入子 shell（目录：$WORKDIR/$subdir）。退出请输 exit / Ctrl-D${RESET}"
-        ( cd "$WORKDIR/$subdir" && bash --noprofile --norc )
+        # 用 bash -i 才能获得用户环境 + bash-completion（更像真实 bash）
+        ( cd "$WORKDIR/$subdir" && bash -i )
         continue
         ;;
+
       skip|sk)
         say "${YELLOW}⏭️  已跳过${RESET}"
         return 2
         ;;
-      quit|exit|q)
-        exit 0
-        ;;
-      "")
-        continue
-        ;;
     esac
+
+    # 记录历史（让↑↓跨题/跨天好用）
+    history -s "$cmd" 2>/dev/null || true
+    history -w "$HISTFILE" 2>/dev/null || true
 
     set +e
     run_user_cmd "$cmd" "$subdir"
@@ -532,9 +538,7 @@ load_exercises() {
   EXERCISE_TAGS=()
 
   while IFS='|' read -r id title goal hint solution checker_type checker_args subdir tags; do
-    # 跳过注释和空行
     [[ "$id" =~ ^#.*$ || -z "$id" ]] && continue
-
     EXERCISE_IDS+=("$id")
     EXERCISE_TITLES+=("$title")
     EXERCISE_GOALS+=("$goal")
@@ -542,20 +546,17 @@ load_exercises() {
     EXERCISE_SOLUTIONS+=("$solution")
     EXERCISE_CHECKER_TYPES+=("$checker_type")
     EXERCISE_CHECKER_ARGS+=("$checker_args")
-    EXERCISE_SUBDIRS+=("$subdir")
-    EXERCISE_TAGS+=("$tags")
+    EXERCISE_SUBDIRS+=("${subdir:-.}")
+    EXERCISE_TAGS+=("${tags:-}")
   done < "$EXERCISES_CONF"
 }
 
 # ---------- 运行练习 ----------
 run_exercise() {
   local idx="$1"
-  local id="${EXERCISE_IDS[$idx]}"
 
-  # 检查必需命令（optional 标签除外）
   local tags="${EXERCISE_TAGS[$idx]}"
   if [[ "$tags" == *"optional"* ]]; then
-    # 尝试从solution提取命令
     local main_cmd
     main_cmd=$(echo "${EXERCISE_SOLUTIONS[$idx]}" | awk '{print $1}')
     if ! has "$main_cmd"; then
@@ -565,7 +566,7 @@ run_exercise() {
   fi
 
   exercise_loop \
-    "$id" \
+    "${EXERCISE_IDS[$idx]}" \
     "${EXERCISE_TITLES[$idx]}" \
     "${EXERCISE_GOALS[$idx]}" \
     "${EXERCISE_HINTS[$idx]}" \
@@ -573,6 +574,17 @@ run_exercise() {
     "${EXERCISE_CHECKER_TYPES[$idx]}" \
     "${EXERCISE_CHECKER_ARGS[$idx]}" \
     "${EXERCISE_SUBDIRS[$idx]}"
+}
+
+show_summary() {
+  local passed="$1" skipped="$2" failed="$3"
+  hr
+  say "${BOLD}📊 今日结果 Summary${RESET}"
+  say "${GREEN}✅ 通过: $passed${RESET}"
+  say "${YELLOW}⏭️  跳过: $skipped${RESET}"
+  say "${RED}❌ 失败: $failed${RESET}"
+  say "${BLUE}📁 目录: $WORKDIR${RESET}"
+  [[ "$KEEP" -eq 0 ]] && say "（未使用 --keep，退出后自动清理）"
 }
 
 run_all() {
@@ -590,7 +602,6 @@ run_all() {
       *) failed=$((failed + 1)) ;;
     esac
   done
-
   show_summary "$passed" "$skipped" "$failed"
 }
 
@@ -612,7 +623,6 @@ run_quick() {
       *) failed=$((failed + 1)) ;;
     esac
   done
-
   show_summary "$passed" "$skipped" "$failed"
 }
 
@@ -635,19 +645,7 @@ run_by_tag() {
       *) failed=$((failed + 1)) ;;
     esac
   done
-
   show_summary "$passed" "$skipped" "$failed"
-}
-
-show_summary() {
-  local passed="$1" skipped="$2" failed="$3"
-  hr
-  say "${BOLD}📊 今日结果 Summary${RESET}"
-  say "${GREEN}✅ 通过: $passed${RESET}"
-  say "${YELLOW}⏭️  跳过: $skipped${RESET}"
-  say "${RED}❌ 失败: $failed${RESET}"
-  say "${BLUE}📁 目录: $WORKDIR${RESET}"
-  [[ "$KEEP" -eq 0 ]] && say "（未使用 --keep，退出后自动清理）"
 }
 
 main_menu() {
@@ -657,35 +655,46 @@ main_menu() {
   say ""
 
   if [[ $USE_DIALOG -eq 1 ]]; then
-    choice=$(dialog --stdout --menu "选择练习模式:" 15 60 3 \
+    choice=$(dialog --stdout --menu "选择练习模式:" 15 70 4 \
       1 "全量练习（所有题目）" \
       2 "快速练习（基础题）" \
       3 "只创建沙盒" \
+      4 "按标签运行（--tag）" \
       2>&1)
     case "$choice" in
       1) run_all ;;
       2|"") run_quick ;;
       3) say "已创建沙盒：$WORKDIR"; KEEP=1 ;;
+      4)
+        dialog --msgbox "请用：./review-new.sh --tag <tag>\n例如：--tag basic" 8 60 2>&1 >/dev/tty
+        run_quick
+        ;;
       *) run_quick ;;
     esac
   elif [[ $USE_GUM -eq 1 ]]; then
-    choice=$(gum choose "全量练习（所有题目）" "快速练习（基础题）" "只创建沙盒" || echo "快速练习（基础题）")
+    choice=$(gum choose "全量练习（所有题目）" "快速练习（基础题）" "只创建沙盒" "按标签运行（--tag）" || echo "快速练习（基础题）")
     case "$choice" in
       "全量练习（所有题目）") run_all ;;
       "快速练习（基础题）") run_quick ;;
       "只创建沙盒") say "已创建沙盒：$WORKDIR"; KEEP=1 ;;
+      "按标签运行（--tag）")
+        gum style --border rounded --padding "1 2" "请用：./review-new.sh --tag <tag>（例如 basic）"
+        run_quick
+        ;;
       *) run_quick ;;
     esac
   else
     say "1) 全量练习（所有题目）"
     say "2) 快速练习（基础题）"
     say "3) 只创建沙盒"
+    say "4) 按标签运行（--tag）"
     say ""
-    read -r -p "选择 1/2/3 [默认2]: " choice </dev/tty
+    read -r -p "选择 1/2/3/4 [默认2]: " choice </dev/tty
     case "$choice" in
       1) run_all ;;
       2|"") run_quick ;;
       3) say "已创建沙盒：$WORKDIR"; KEEP=1 ;;
+      4) say "请用：./review-new.sh --tag <tag>（例如 basic）"; run_quick ;;
       *) run_quick ;;
     esac
   fi
@@ -695,8 +704,16 @@ main_menu() {
 setup_sandbox
 load_exercises
 
-case "$MODE" in
-  all) run_all ;;
-  quick) run_quick ;;
-  menu|*) main_menu ;;
-esac
+# 如果用户传了 --tag，则优先按 tag 跑
+if [[ -n "$TAG_FILTER" ]]; then
+  run_by_tag "$TAG_FILTER"
+else
+  case "$MODE" in
+    all) run_all ;;
+    quick) run_quick ;;
+    menu|*) main_menu ;;
+  esac
+fi
+
+# 确保在 bash -i 启动脚本时也能正常退出，不掉到交互 prompt
+exit 0
