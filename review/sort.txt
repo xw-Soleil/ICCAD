@@ -1,0 +1,5 @@
+apple:10:2.5
+orange:20:3.4
+banana:30:5.5
+pear:90:2.3
+hello:4:1.5
